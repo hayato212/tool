@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>USDJPY Pro Signal</title>
+<style>
+body {font-family:-apple-system;background:#0f172a;color:white;text-align:center;padding:20px;}
+.card {background:#1e293b;border-radius:20px;padding:20px;margin-top:20px;}
+.big {font-size:42px;font-weight:bold;}
+.buy {color:#22c55e;} .sell {color:#ef4444;} .wait {color:#aaa;}
+button {margin-top:15px;padding:15px;width:100%;font-size:18px;border-radius:12px;border:none;background:#3b82f6;color:white;}
+.small {font-size:14px;color:#aaa;}
+</style>
+</head>
+
+<body>
+
+<h2>USDJPY PRO SIGNAL</h2>
+
+<div class="card">
+  <div id="signal" class="big wait">WAIT</div>
+  <div id="reason" class="small"></div>
+</div>
+
+<div class="card">
+  <div id="price">価格: --</div>
+  <div id="trend" class="small"></div>
+</div>
+
+<button onclick="run()">更新</button>
+
+<script>
+
+// ===== APIキー =====
+function getApiKey(){
+  let k = localStorage.getItem("fx_api");
+  if(!k){
+    k = prompt("APIキー入力");
+    localStorage.setItem("fx_api", k);
+  }
+  return k;
+}
+
+// ===== データ取得 =====
+async function getData(){
+  let key = getApiKey();
+  let url = `https://www.alphavantage.co/query?function=FX_INTRADAY&from_symbol=USD&to_symbol=JPY&interval=1min&outputsize=compact&apikey=${key}`;
+  let res = await fetch(url);
+  let data = await res.json();
+
+  if(!data["Time Series FX (1min)"]) throw "データ取得失敗";
+
+  let ts = data["Time Series FX (1min)"];
+  let closes=[], highs=[], lows=[];
+
+  Object.keys(ts).reverse().forEach(k=>{
+    let d = ts[k];
+    closes.push(+d["4. close"]);
+    highs.push(+d["2. high"]);
+    lows.push(+d["3. low"]);
+  });
+
+  return {closes, highs, lows};
+}
+
+// ===== RSI =====
+function rsi(a,p=9){
+  let g=0,l=0;
+  for(let i=a.length-p;i<a.length;i++){
+    let d=a[i]-a[i-1];
+    if(d>0)g+=d; else l-=d;
+  }
+  return 100-100/(1+(g/(l||0.0001)));
+}
+
+// ===== 上位足生成 =====
+function resample(arr, n){
+  let out=[];
+  for(let i=0;i<arr.length;i+=n){
+    out.push(arr[i]);
+  }
+  return out;
+}
+
+// ===== トレンド判定 =====
+function trendByRSI(r){
+  if(r>55) return "UP";
+  if(r<45) return "DOWN";
+  return "RANGE";
+}
+
+// ===== RSIブレイク =====
+function rsiBreak(arr){
+  let recent = arr.slice(-15);
+  let high = Math.max(...recent);
+  let low  = Math.min(...recent);
+  let now  = arr[arr.length-1];
+
+  if(now > high) return "BUY";
+  if(now < low)  return "SELL";
+  return "NONE";
+}
+
+// ===== メイン =====
+async function run(){
+
+  try{
+    let {closes} = await getData();
+
+    let price = closes[closes.length-1];
+
+    // ===== 上位足作成 =====
+    let c1m = closes;
+    let c1h = resample(closes, 60);
+    let c4h = resample(closes, 240);
+
+    let r1m = rsi(c1m);
+    let r1h = rsi(c1h);
+    let r4h = rsi(c4h);
+
+    let t1h = trendByRSI(r1h);
+    let t4h = trendByRSI(r4h);
+
+    let breakSignal = rsiBreak(c1m.map((v,i)=>rsi(c1m.slice(0,i+1))));
+
+    let signal="WAIT", reason=[];
+
+    // ===== 条件 =====
+    if(t4h==="UP" && t1h==="UP" && breakSignal==="BUY"){
+      signal="BUY";
+      reason.push("上位足↑ + RSIブレイク↑");
+    }
+
+    if(t4h==="DOWN" && t1h==="DOWN" && breakSignal==="SELL"){
+      signal="SELL";
+      reason.push("上位足↓ + RSIブレイク↓");
+    }
+
+    // ===== 表示 =====
+    let cls = signal==="BUY"?"buy":signal==="SELL"?"sell":"wait";
+
+    document.getElementById("signal").innerText = signal;
+    document.getElementById("signal").className = "big "+cls;
+
+    document.getElementById("reason").innerText = reason.join(" / ");
+
+    document.getElementById("price").innerText = "価格: "+price.toFixed(3);
+
+    document.getElementById("trend").innerText =
+      `4H:${t4h} / 1H:${t1h} / RSI(1m):${r1m.toFixed(1)}`;
+
+  }catch(e){
+    document.getElementById("signal").innerText="ERROR";
+    document.getElementById("reason").innerText=e;
+  }
+}
+
+</script>
+
+</body>
+</html>
