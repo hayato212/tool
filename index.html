@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>USDJPY Log Tool</title>
+<style>
+body {font-family:-apple-system;background:#0f172a;color:white;text-align:center;padding:20px;}
+.card {background:#1e293b;border-radius:20px;padding:20px;margin-top:20px;}
+.big {font-size:42px;font-weight:bold;}
+.buy {color:#22c55e;} .sell {color:#ef4444;} .wait {color:#aaa;}
+button {margin-top:15px;padding:15px;width:100%;font-size:18px;border-radius:12px;border:none;background:#3b82f6;color:white;}
+.small {font-size:14px;color:#aaa;}
+</style>
+</head>
+
+<body>
+
+<h2>USDJPY SIGNAL</h2>
+
+<div class="card">
+  <div id="signal" class="big wait">WAIT</div>
+  <div id="reason" class="small"></div>
+</div>
+
+<div class="card">
+  <div id="price">価格: --</div>
+  <div id="info" class="small"></div>
+</div>
+
+<div class="card">
+  <div id="stats" class="small"></div>
+</div>
+
+<button onclick="run()">更新</button>
+
+<script>
+
+// ===== 保存 =====
+function loadLogs(){
+  return JSON.parse(localStorage.getItem("fx_logs") || "[]");
+}
+function saveLogs(l){
+  localStorage.setItem("fx_logs", JSON.stringify(l));
+}
+
+// ===== 価格 =====
+async function getPrice(){
+  let r = await fetch("https://open.er-api.com/v6/latest/USD");
+  let d = await r.json();
+  return d.rates.JPY;
+}
+
+// ===== RSI =====
+function rsi(a,p=9){
+  let g=0,l=0;
+  for(let i=a.length-p;i<a.length;i++){
+    let d=a[i]-a[i-1];
+    if(d>0)g+=d; else l-=d;
+  }
+  return 100-100/(1+(g/(l||0.0001)));
+}
+
+// ===== 疑似データ =====
+function makeData(price){
+  let arr=[];
+  for(let i=0;i<120;i++){
+    arr.push(price+(Math.random()-0.5)*0.2);
+  }
+  return arr;
+}
+
+// ===== トレンド =====
+function trend(r){
+  if(r>55) return "UP";
+  if(r<45) return "DOWN";
+  return "RANGE";
+}
+
+// ===== ブレイク =====
+function rsiBreak(arr){
+  let h=Math.max(...arr.slice(-10));
+  let l=Math.min(...arr.slice(-10));
+  let n=arr[arr.length-1];
+  if(n>h) return "BUY";
+  if(n<l) return "SELL";
+  return "NONE";
+}
+
+// ===== メイン =====
+async function run(){
+
+  let price = await getPrice();
+  let closes = makeData(price);
+
+  let rsiArr = closes.map((_,i)=>rsi(closes.slice(0,i+1)));
+  let rNow = rsiArr[rsiArr.length-1];
+
+  let r1h = rsi(closes.filter((_,i)=>i%10===0));
+  let r4h = rsi(closes.filter((_,i)=>i%40===0));
+
+  let t1h = trend(r1h);
+  let t4h = trend(r4h);
+
+  let br = rsiBreak(rsiArr);
+
+  let signal="WAIT";
+  let reason=[];
+
+  if(t4h==="UP" && t1h==="UP" && br==="BUY"){
+    signal="BUY";
+    reason.push("上昇一致");
+  }
+
+  if(t4h==="DOWN" && t1h==="DOWN" && br==="SELL"){
+    signal="SELL";
+    reason.push("下降一致");
+  }
+
+  // ===== ログ =====
+  let logs = loadLogs();
+  let now = Date.now();
+
+  logs = logs.map(l=>{
+    if(l.result) return l;
+    if(now - l.time > 60000){
+      let diff = price - l.price;
+      if(l.type==="BUY") l.result = diff>0 ? "WIN":"LOSS";
+      if(l.type==="SELL") l.result = diff<0 ? "WIN":"LOSS";
+    }
+    return l;
+  });
+
+  if(signal==="BUY"||signal==="SELL"){
+    logs.push({type:signal,price,time:now});
+  }
+
+  saveLogs(logs);
+
+  let done = logs.filter(l=>l.result);
+  let win = done.filter(l=>l.result==="WIN").length;
+  let rate = done.length ? (win/done.length*100).toFixed(1):0;
+
+  // ===== 表示 =====
+  let cls = signal==="BUY"?"buy":signal==="SELL"?"sell":"wait";
+
+  document.getElementById("signal").innerText = signal;
+  document.getElementById("signal").className = "big "+cls;
+
+  document.getElementById("price").innerText =
+    "価格: "+price.toFixed(3);
+
+  document.getElementById("reason").innerText =
+    reason.join(" / ") || "条件不足";
+
+  document.getElementById("info").innerText =
+    `RSI:${rNow.toFixed(1)} | 1H:${t1h} | 4H:${t4h}`;
+
+  document.getElementById("stats").innerText =
+    `勝率: ${rate}% (${done.length}回)`;
+
+}
+
+</script>
+
+</body>
+</html>
